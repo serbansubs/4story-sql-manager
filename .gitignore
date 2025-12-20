@@ -1,0 +1,38 @@
+# Dependencies
+node_modules/
+package-lock.json
+yarn.lock
+
+# Build outputs
+dist/
+build/
+*.exe
+*.7z
+
+# Development
+.DS_Store
+*.log
+npm-debug.log*
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+Thumbs.db
+desktop.ini
+
+# Temporary files
+*.tmp
+*.temp
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Release folder (not needed in repo)
+ready to release/

@@ -1,0 +1,60 @@
+{
+  "name": "4story-sql-manager",
+  "version": "1.0.0",
+  "description": "4Story SQL Manager - A lightweight SQL Server database management tool",
+  "main": "main.js",
+  "scripts": {
+    "build": "webpack",
+    "start": "npm run build && electron .",
+    "dev": "webpack --watch",
+    "dist": "npm run build && electron-builder",
+    "portable": "npm run build && electron-builder --dir"
+  },
+  "keywords": ["sql-server", "database", "management", "electron", "react", "database-tool", "sql-manager"],
+  "author": "Serban [pnk]",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/yourusername/4story-sql-manager"
+  },
+  "type": "commonjs",
+  "dependencies": {
+    "@fluentui/react-components": "^9.72.8",
+    "@fluentui/react-icons": "^2.0.316",
+    "mssql": "^12.2.0",
+    "react": "^19.2.3",
+    "react-dom": "^19.2.3"
+  },
+  "devDependencies": {
+    "@babel/core": "^7.28.5",
+    "@babel/preset-react": "^7.28.5",
+    "babel-loader": "^10.0.0",
+    "css-loader": "^7.1.2",
+    "electron": "^39.2.7",
+    "electron-builder": "^26.0.12",
+    "electron-packager": "^17.1.2",
+    "html-webpack-plugin": "^5.6.5",
+    "style-loader": "^4.0.0",
+    "webpack": "^5.103.0",
+    "webpack-cli": "^6.0.1"
+  },
+  "build": {
+    "appId": "com.4story.sqlmanager",
+    "productName": "4Story SQL Manager",
+    "files": [
+      "build/**/*",
+      "main.js",
+      "node_modules/**/*",
+      "package.json",
+      "!node_modules/@rollup/rollup-linux-*",
+      "!node_modules/@rollup/rollup-darwin-*",
+      "!node_modules/@rollup/rollup-android-*"
+    ],
+    "asarUnpack": [
+      "node_modules/mssql/**/*"
+    ],
+    "win": {
+      "target": "portable"
+    }
+  }
+}
