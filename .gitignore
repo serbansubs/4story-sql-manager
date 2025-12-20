@@ -36,3 +36,6 @@ desktop.ini
 
 # Release folder (not needed in repo)
 ready to release/
+
+# Claude Code settings (not needed in repo)
+.claude/
