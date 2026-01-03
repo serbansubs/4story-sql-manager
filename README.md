@@ -3,7 +3,7 @@
 <p align="center">
   <img src="https://img.shields.io/badge/platform-Windows%20x64-blue" alt="Platform">
   <img src="https://img.shields.io/badge/license-MIT-green" alt="License">
-  <img src="https://img.shields.io/badge/version-1.0.0-orange" alt="Version">
+  <img src="https://img.shields.io/badge/version-1.1.0-orange" alt="Version">
 </p>
 
 A lightweight, free, and open-source SQL Server database management tool built with Electron and React. No installation required, no license keys, no BS.
@@ -21,8 +21,20 @@ Can't find a decent free SQL Server manager? This is a fully-featured alternativ
 
 ## ✨ Features
 
-### 🔍 Smart Search (Featured!)
-- **Real-time search** as you type
+### 🆕 What's New in v1.1.0
+- **📄 Pagination System**: Navigate large tables with 1000 rows per page
+- **🖱️ Universal Context Menus**: Right-click anywhere for quick actions
+- **⌨️ Keyboard Shortcuts**: Ctrl+F (search), Ctrl+N (new table), Ctrl+Shift+N (new function)
+- **➕ Create Table**: Visual designer with interactive column editor
+- **➕ Create Function/Procedure**: Full SQL editor for creating routines
+- **🗑️ Delete Functions**: Available in all views
+- **🔍 Full Table Search**: Searches entire database, not just current page
+- **🎨 Optimized UI**: Larger window (1600x1000), better dialogs, cleaner toolbar
+
+**[See full changelog →](CHANGELOG.md)**
+
+### 🔍 Smart Search
+- **Real-time search** as you type (press **Ctrl+F** anywhere!)
 - Search across **table names, functions, and row data**
 - Find data inside tables without opening them
 - **"Did you mean...?"** fuzzy matching for typos
@@ -32,6 +44,9 @@ Can't find a decent free SQL Server manager? This is a fully-featured alternativ
 **[Read full Smart Search documentation →](SMART_SEARCH.md)**
 
 ### 🔌 Core Features
+- **Context Menus**: Right-click on tables, functions, databases for quick actions
+- **Pagination**: Handle large tables with efficient page navigation
+- **CRUD Operations**: Create, read, update, delete tables and functions
 - Connect to SQL Server with multiple connections
 - Browse databases, tables, and functions in tree view
 - View and edit table data inline with smart primary key detection
@@ -40,7 +55,7 @@ Can't find a decent free SQL Server manager? This is a fully-featured alternativ
 - Copy tables between databases (with or without data)
 - Multiple view modes: Grid, List, Details
 - Multi-tab workflow
-- Inline table filtering
+- Server-side search and filtering
 
 **[See complete feature list →](FEATURES.md)**
 
@@ -105,25 +120,35 @@ npm run dist
 3. Browse databases in the left panel
 
 ### Working with Tables
-- Click on a table to open it in a new tab
-- Double-click cells to edit
-- Use the toolbar to add/delete rows
-- Use the search box to filter rows in real-time
-- Copy tables between databases using Copy/Paste buttons
+- **Left-click** on a table to open it in a new tab
+- **Right-click** on a table for context menu (copy, paste, rename, delete)
+- **Double-click** cells to edit data inline
+- Use **Ctrl+N** to create a new table with visual designer
+- Use the search box to filter rows across entire table
+- Navigate large tables with pagination controls
+- Copy tables between databases via right-click menu
 
 ### Smart Search
-- Click "Smart Search" button in toolbar (requires database selection)
+- Press **Ctrl+F** from anywhere or click "Search" button in toolbar
 - Type to search instantly across:
   - Table names and schemas
   - Function/procedure names
-  - Row data within tables (searches text columns)
+  - Row data within tables (searches all columns)
 - Click any result to open that table/function
 - Get "Did you mean...?" suggestions for typos
 
-### Editing Functions
-- Click on a function/procedure to open the code editor
-- Edit the SQL code
+### Working with Functions
+- **Left-click** on a function to open the code editor
+- **Right-click** for context menu (rename, delete)
+- Use **Ctrl+Shift+N** to create new function/procedure
+- Edit SQL code in professional dark theme editor
 - Click "Run" to execute or "Save" to save changes
+
+### Keyboard Shortcuts
+- **Ctrl+F**: Open Smart Search
+- **Ctrl+N**: Create New Table (in tables view)
+- **Ctrl+Shift+N**: Create New Function (in functions view)
+- **Escape**: Close context menus
 
 ## 📖 Documentation
 

@@ -1,6 +1,6 @@
 {
   "name": "4story-sql-manager",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "4Story SQL Manager - A lightweight SQL Server database management tool",
   "main": "main.js",
   "scripts": {
