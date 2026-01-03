@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog } = require('electron');
 const sql = require('mssql');
 const path = require('path');
 
@@ -7,8 +7,8 @@ const connections = new Map();
 
 function createWindow() {
   mainWindow = new BrowserWindow({
-    width: 1400,
-    height: 900,
+    width: 1600,
+    height: 1000,
     webPreferences: {
       nodeIntegration: true,
       contextIsolation: false
@@ -59,7 +59,11 @@ ipcMain.handle('connect-database', async (event, config) => {
 ipcMain.handle('get-databases', async (event, connectionId) => {
   try {
     const pool = connections.get(connectionId);
-    const result = await pool.request().query('SELECT name FROM sys.databases ORDER BY name');
+    const result = await pool.request().query(`
+      SELECT name FROM sys.databases
+      WHERE name NOT IN ('master', 'tempdb', 'model', 'msdb')
+      ORDER BY name
+    `);
     return { success: true, databases: result.recordset.map(r => r.name) };
   } catch (error) {
     return { success: false, error: error.message };
@@ -89,12 +93,43 @@ ipcMain.handle('get-functions', async (event, { connectionId, database }) => {
   }
 });
 
-ipcMain.handle('get-table-data', async (event, { connectionId, database, schema, table }) => {
+ipcMain.handle('get-table-data', async (event, { connectionId, database, schema, table, offset = 0, limit = 1000, searchTerm = '' }) => {
   try {
     const pool = connections.get(connectionId);
+
+    let whereClause = '';
+
+    // If search term provided, build WHERE clause
+    if (searchTerm && searchTerm.trim()) {
+      // Get all columns for the table
+      const columnsResult = await pool.request()
+        .query(`USE [${database}];
+                SELECT COLUMN_NAME, DATA_TYPE
+                FROM INFORMATION_SCHEMA.COLUMNS
+                WHERE TABLE_SCHEMA = '${schema}' AND TABLE_NAME = '${table}'`);
+
+      const columns = columnsResult.recordset;
+
+      // Build search conditions for all columns
+      const searchConditions = columns.map(col =>
+        `CAST([${col.COLUMN_NAME}] AS NVARCHAR(MAX)) LIKE '%${searchTerm.replace(/'/g, "''")}%'`
+      ).join(' OR ');
+
+      if (searchConditions) {
+        whereClause = `WHERE ${searchConditions}`;
+      }
+    }
+
+    // Get total count (with or without filter)
+    const countResult = await pool.request()
+      .query(`USE [${database}]; SELECT COUNT(*) as total FROM [${schema}].[${table}] ${whereClause}`);
+    const totalRows = countResult.recordset[0].total;
+
+    // Get paginated data (with or without filter)
     const result = await pool.request()
-      .query(`USE [${database}]; SELECT TOP 1000 * FROM [${schema}].[${table}]`);
-    return { success: true, data: result.recordset };
+      .query(`USE [${database}]; SELECT * FROM [${schema}].[${table}] ${whereClause} ORDER BY (SELECT NULL) OFFSET ${offset} ROWS FETCH NEXT ${limit} ROWS ONLY`);
+
+    return { success: true, data: result.recordset, totalRows };
   } catch (error) {
     return { success: false, error: error.message };
   }
@@ -415,6 +450,63 @@ ipcMain.handle('rename-function', async (event, { connectionId, database, schema
   }
 });
 
+ipcMain.handle('select-backup-path', async (event, { defaultFileName }) => {
+  try {
+    const result = await dialog.showSaveDialog(mainWindow, {
+      title: 'Select Backup Location',
+      defaultPath: defaultFileName,
+      filters: [
+        { name: 'SQL Server Backup', extensions: ['bak'] },
+        { name: 'All Files', extensions: ['*'] }
+      ]
+    });
+
+    return {
+      success: !result.canceled,
+      filePath: result.filePath
+    };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+
+ipcMain.handle('backup-database', async (event, { connectionId, database, backupPath }) => {
+  try {
+    const pool = connections.get(connectionId);
+
+    // If no custom path, use SQL Server's default backup directory
+    let finalPath = backupPath;
+
+    if (!backupPath || backupPath.trim() === '') {
+      // Get SQL Server's default backup directory
+      const dirQuery = `DECLARE @BackupDirectory NVARCHAR(255)
+                        EXEC master.dbo.xp_instance_regread
+                          N'HKEY_LOCAL_MACHINE',
+                          N'Software\\Microsoft\\MSSQLServer\\MSSQLServer',
+                          N'BackupDirectory',
+                          @BackupDirectory OUTPUT
+                        SELECT @BackupDirectory AS BackupDirectory`;
+
+      const dirResult = await pool.request().query(dirQuery);
+      const defaultDir = dirResult.recordset[0].BackupDirectory;
+      const fileName = `${database}_${new Date().toISOString().split('T')[0].replace(/-/g, '')}.bak`;
+      finalPath = `${defaultDir}\\${fileName}`;
+    }
+
+    const safePath = finalPath.replace(/'/g, "''");
+
+    // Execute backup
+    await pool.request().query(`BACKUP DATABASE [${database}] TO DISK = N'${safePath}'`);
+
+    return { success: true, path: finalPath };
+  } catch (error) {
+    return {
+      success: false,
+      error: error.message
+    };
+  }
+});
+
 ipcMain.handle('insert-row', async (event, { connectionId, database, schema, table, rowData }) => {
   try {
     const pool = connections.get(connectionId);
@@ -445,6 +537,57 @@ ipcMain.handle('delete-row', async (event, { connectionId, database, schema, tab
       .input('pkValue', primaryKeyValue)
       .query(`USE [${database}]; DELETE FROM [${schema}].[${table}] WHERE [${primaryKey}] = @pkValue`);
 
+    return { success: true };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+
+ipcMain.handle('delete-function', async (event, { connectionId, database, schema, name, type }) => {
+  try {
+    const pool = connections.get(connectionId);
+    const objectType = type === 'PROCEDURE' ? 'PROCEDURE' : 'FUNCTION';
+    await pool.request()
+      .query(`USE [${database}]; DROP ${objectType} [${schema}].[${name}]`);
+    return { success: true };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+
+ipcMain.handle('create-table', async (event, { connectionId, database, schema, tableName, columns }) => {
+  try {
+    const pool = connections.get(connectionId);
+
+    // Build CREATE TABLE statement
+    const columnDefs = columns.map(col => {
+      let def = `[${col.name}] ${col.dataType}`;
+
+      if (col.length && (col.dataType.includes('char') || col.dataType.includes('binary'))) {
+        def += `(${col.length})`;
+      }
+
+      if (col.isPrimaryKey) def += ' PRIMARY KEY';
+      if (col.isIdentity) def += ' IDENTITY(1,1)';
+      if (!col.allowNull) def += ' NOT NULL';
+      if (col.defaultValue) def += ` DEFAULT ${col.defaultValue}`;
+
+      return def;
+    });
+
+    const createSQL = `USE [${database}]; CREATE TABLE [${schema}].[${tableName}] (${columnDefs.join(', ')})`;
+
+    await pool.request().query(createSQL);
+    return { success: true };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+
+ipcMain.handle('create-function', async (event, { connectionId, database, definition }) => {
+  try {
+    const pool = connections.get(connectionId);
+    await pool.request().query(`USE [${database}]; ${definition}`);
     return { success: true };
   } catch (error) {
     return { success: false, error: error.message };

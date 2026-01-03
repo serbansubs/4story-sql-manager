@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import {
   FluentProvider,
   webLightTheme,
@@ -39,7 +39,9 @@ import {
   DocumentTableArrowRight20Regular,
   Play20Regular,
   ChevronLeft20Regular,
-  ChevronRight20Regular
+  ChevronRight20Regular,
+  DatabaseArrowDown20Regular,
+  Add20Regular
 } from '@fluentui/react-icons';
 import './App.css';
 
@@ -51,6 +53,9 @@ function TableTabContent({ tab, setTabs, tabs }) {
   const [editValue, setEditValue] = React.useState('');
   const [newRow, setNewRow] = React.useState(null);
   const [tableSearchTerm, setTableSearchTerm] = React.useState('');
+  const [currentPage, setCurrentPage] = React.useState(0);
+  const itemsPerPage = 1000;
+  const [isSearching, setIsSearching] = React.useState(false);
 
   const handleCellEdit = (rowIndex, columnName, currentValue) => {
     setEditingCell({ rowIndex, columnName });
@@ -187,14 +192,38 @@ function TableTabContent({ tab, setTabs, tabs }) {
     }
   };
 
-  // Filter rows based on search term
-  const filteredData = tab.data.filter(row => {
-    if (!tableSearchTerm) return true;
-    return tab.columns.some(col => {
-      const value = row[col.COLUMN_NAME];
-      return value && String(value).toLowerCase().includes(tableSearchTerm.toLowerCase());
+  const loadPage = async (pageNumber, searchTerm = tableSearchTerm) => {
+    const offset = pageNumber * itemsPerPage;
+    const result = await ipcRenderer.invoke('get-table-data', {
+      connectionId: tab.connectionId,
+      database: tab.database,
+      schema: tab.table.TABLE_SCHEMA,
+      table: tab.table.TABLE_NAME,
+      offset,
+      limit: itemsPerPage,
+      searchTerm: searchTerm
     });
-  });
+
+    if (result.success) {
+      const updatedTabs = tabs.map(t => {
+        if (t.id === tab.id) {
+          return { ...t, data: result.data, totalRows: result.totalRows };
+        }
+        return t;
+      });
+      setTabs(updatedTabs);
+      setCurrentPage(pageNumber);
+      setIsSearching(!!searchTerm);
+    }
+  };
+
+  const handleSearch = (searchValue) => {
+    setTableSearchTerm(searchValue);
+    setCurrentPage(0);
+    loadPage(0, searchValue);
+  };
+
+  const totalPages = tab.totalRows ? Math.ceil(tab.totalRows / itemsPerPage) : 1;
 
   return (
     <Card className="data-card">
@@ -203,17 +232,22 @@ function TableTabContent({ tab, setTabs, tabs }) {
         <Input
           placeholder="Search in table..."
           value={tableSearchTerm}
-          onChange={(e) => setTableSearchTerm(e.target.value)}
+          onChange={(e) => handleSearch(e.target.value)}
           contentBefore={<Search20Regular />}
           style={{ flex: '1', maxWidth: '300px' }}
           size="small"
         />
+        {tableSearchTerm && (
+          <Button size="small" onClick={() => handleSearch('')}>
+            Clear Search
+          </Button>
+        )}
         <Button appearance="primary" onClick={handleAddRow}>
           Add Row
         </Button>
       </div>
       <div style={{ fontSize: '10px', color: '#605e5c', marginBottom: '8px' }}>
-        Showing {filteredData.length} of {tab.data.length} rows
+        Showing {tab.data.length} rows {tab.totalRows ? `(Page ${currentPage + 1} of ${totalPages}, ${isSearching ? 'Filtered' : 'Total'}: ${tab.totalRows} rows)` : ''}
       </div>
       <div className="table-container">
         <table className="data-table">
@@ -229,15 +263,13 @@ function TableTabContent({ tab, setTabs, tabs }) {
             </tr>
           </thead>
           <tbody>
-            {filteredData.map((row) => {
-              const originalIdx = tab.data.indexOf(row);
-              return (
-              <tr key={originalIdx}>
+            {tab.data.map((row, rowIndex) => (
+              <tr key={rowIndex}>
                 <td>
                   <Button
                     size="small"
                     appearance="subtle"
-                    onClick={() => handleDeleteRow(originalIdx)}
+                    onClick={() => handleDeleteRow(rowIndex)}
                     style={{ color: 'red' }}
                   >
                     Delete
@@ -246,16 +278,16 @@ function TableTabContent({ tab, setTabs, tabs }) {
                 {tab.columns.map(col => (
                   <td
                     key={col.COLUMN_NAME}
-                    onDoubleClick={() => handleCellEdit(originalIdx, col.COLUMN_NAME, row[col.COLUMN_NAME])}
+                    onDoubleClick={() => handleCellEdit(rowIndex, col.COLUMN_NAME, row[col.COLUMN_NAME])}
                     style={{ cursor: 'cell' }}
                   >
-                    {editingCell?.rowIndex === originalIdx && editingCell?.columnName === col.COLUMN_NAME ? (
+                    {editingCell?.rowIndex === rowIndex && editingCell?.columnName === col.COLUMN_NAME ? (
                       <Input
                         value={editValue}
                         onChange={(e) => setEditValue(e.target.value)}
-                        onBlur={() => saveCellEdit(originalIdx, col.COLUMN_NAME)}
+                        onBlur={() => saveCellEdit(rowIndex, col.COLUMN_NAME)}
                         onKeyDown={(e) => {
-                          if (e.key === 'Enter') saveCellEdit(originalIdx, col.COLUMN_NAME);
+                          if (e.key === 'Enter') saveCellEdit(rowIndex, col.COLUMN_NAME);
                           if (e.key === 'Escape') setEditingCell(null);
                         }}
                         autoFocus
@@ -268,8 +300,7 @@ function TableTabContent({ tab, setTabs, tabs }) {
                   </td>
                 ))}
               </tr>
-            );
-            })}
+            ))}
             {newRow && (
               <tr style={{ background: '#f0f8ff' }}>
                 <td>
@@ -298,8 +329,34 @@ function TableTabContent({ tab, setTabs, tabs }) {
           </tbody>
         </table>
       </div>
-      <div className="table-info">
-        Showing {tab.data.length} rows (double-click cell to edit)
+      <div className="table-info" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '12px' }}>
+        <div>Showing {tab.data.length} rows (double-click cell to edit)</div>
+        {tab.totalRows && totalPages > 1 && (
+          <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+            <Button
+              size="small"
+              appearance="subtle"
+              icon={<ChevronLeft20Regular />}
+              onClick={() => loadPage(currentPage - 1)}
+              disabled={currentPage === 0}
+            >
+              Previous
+            </Button>
+            <span style={{ fontSize: '12px', color: '#605e5c' }}>
+              Page {currentPage + 1} of {totalPages}
+            </span>
+            <Button
+              size="small"
+              appearance="subtle"
+              icon={<ChevronRight20Regular />}
+              iconPosition="after"
+              onClick={() => loadPage(currentPage + 1)}
+              disabled={currentPage >= totalPages - 1}
+            >
+              Next
+            </Button>
+          </div>
+        )}
       </div>
     </Card>
   );
@@ -418,6 +475,15 @@ function App() {
   const [activeTab, setActiveTab] = useState(null);
   const [openTreeItems, setOpenTreeItems] = useState([]);
   const [viewType, setViewType] = useState('grid'); // 'grid', 'list', 'details'
+  const [showCreateTableDialog, setShowCreateTableDialog] = useState(false);
+  const [showCreateFunctionDialog, setShowCreateFunctionDialog] = useState(false);
+  const [newTableName, setNewTableName] = useState('');
+  const [newTableSchema, setNewTableSchema] = useState('dbo');
+  const [newTableColumns, setNewTableColumns] = useState([{ name: '', dataType: 'INT', length: '', isPrimaryKey: false, isIdentity: false, allowNull: true, defaultValue: '' }]);
+  const [newFunctionDefinition, setNewFunctionDefinition] = useState('CREATE PROCEDURE dbo.MyProcedure\nAS\nBEGIN\n  -- Your code here\nEND');
+  const [contextMenuTarget, setContextMenuTarget] = useState(null);
+  const [contextMenuPosition, setContextMenuPosition] = useState({ x: 0, y: 0 });
+  const [showContextMenu, setShowContextMenu] = useState(false);
 
   // Connection form
   const [connectionForm, setConnectionForm] = useState({
@@ -431,13 +497,54 @@ function App() {
 
   const [showCopyDialog, setShowCopyDialog] = useState(false);
   const [showSmartSearchDialog, setShowSmartSearchDialog] = useState(false);
+  const [showBackupDialog, setShowBackupDialog] = useState(false);
   const [smartSearchTerm, setSmartSearchTerm] = useState('');
   const [smartSearchResults, setSmartSearchResults] = useState({ tables: [], functions: [], data: [], suggestions: [] });
   const [targetDatabase, setTargetDatabase] = useState('');
   const [copyWithData, setCopyWithData] = useState(true);
+  const [backupPath, setBackupPath] = useState('');
+  const [backupInProgress, setBackupInProgress] = useState(false);
+  const [connectionAttempts, setConnectionAttempts] = useState(0);
+  const passwordInputRef = useRef(null);
+
+  // Keyboard shortcuts
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      // Ctrl+F for Smart Search
+      if (e.ctrlKey && e.key === 'f') {
+        e.preventDefault();
+        if (selectedDatabase) {
+          setShowSmartSearchDialog(true);
+        }
+      }
+      // Ctrl+N for New Table (when in tables view)
+      if (e.ctrlKey && e.key === 'n' && viewMode === 'tables') {
+        e.preventDefault();
+        setShowCreateTableDialog(true);
+      }
+      // Ctrl+Shift+N for New Function (when in functions view)
+      if (e.ctrlKey && e.shiftKey && e.key === 'N' && viewMode === 'functions') {
+        e.preventDefault();
+        setShowCreateFunctionDialog(true);
+      }
+      // Escape to close dialogs
+      if (e.key === 'Escape') {
+        setShowContextMenu(false);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [selectedDatabase, viewMode]);
 
   const handleConnect = async () => {
+    // Get password from input directly since it's uncontrolled
+    if (passwordInputRef.current) {
+      connectionForm.password = passwordInputRef.current.value;
+    }
+
     const result = await ipcRenderer.invoke('connect-database', connectionForm);
+
     if (result.success) {
       const newConnection = {
         id: result.connectionId,
@@ -458,8 +565,17 @@ function App() {
 
       setSelectedConnection(newConnection);
       loadDatabases(result.connectionId);
+
+      // Clear password after successful connection
+      if (passwordInputRef.current) {
+        passwordInputRef.current.value = '';
+      }
     } else {
       alert('Connection failed: ' + result.error);
+      // Focus password input after failed connection
+      if (passwordInputRef.current) {
+        passwordInputRef.current.select();
+      }
     }
   };
 
@@ -542,6 +658,7 @@ function App() {
         type: 'table',
         table,
         data: result.data,
+        totalRows: result.totalRows,
         columns: structResult.columns,
         database: selectedDatabase,
         connectionId: selectedConnection.id,
@@ -692,6 +809,140 @@ function App() {
     setShowRenameDialog(true);
   };
 
+  const handleDeleteFunction = async (func) => {
+    if (!confirm(`Are you sure you want to delete ${func.ROUTINE_TYPE.toLowerCase()} ${func.ROUTINE_NAME}?`)) {
+      return;
+    }
+
+    const result = await ipcRenderer.invoke('delete-function', {
+      connectionId: selectedConnection.id,
+      database: selectedDatabase,
+      schema: func.ROUTINE_SCHEMA,
+      name: func.ROUTINE_NAME,
+      type: func.ROUTINE_TYPE
+    });
+
+    if (result.success) {
+      alert('Function/Procedure deleted successfully!');
+      loadTables(selectedDatabase);
+      setViewMode('functions');
+    } else {
+      alert('Delete failed: ' + result.error);
+    }
+  };
+
+  const handleCreateTable = async () => {
+    if (!newTableName || newTableColumns.length === 0 || !newTableColumns[0].name) {
+      alert('Please provide a table name and at least one column');
+      return;
+    }
+
+    const result = await ipcRenderer.invoke('create-table', {
+      connectionId: selectedConnection.id,
+      database: selectedDatabase,
+      schema: newTableSchema,
+      tableName: newTableName,
+      columns: newTableColumns
+    });
+
+    if (result.success) {
+      alert('Table created successfully!');
+      setShowCreateTableDialog(false);
+      setNewTableName('');
+      setNewTableSchema('dbo');
+      setNewTableColumns([{ name: '', dataType: 'INT', length: '', isPrimaryKey: false, isIdentity: false, allowNull: true, defaultValue: '' }]);
+      loadTables(selectedDatabase);
+    } else {
+      alert('Create table failed: ' + result.error);
+    }
+  };
+
+  const handleCreateFunction = async () => {
+    if (!newFunctionDefinition.trim()) {
+      alert('Please provide a function definition');
+      return;
+    }
+
+    const result = await ipcRenderer.invoke('create-function', {
+      connectionId: selectedConnection.id,
+      database: selectedDatabase,
+      definition: newFunctionDefinition
+    });
+
+    if (result.success) {
+      alert('Function/Procedure created successfully!');
+      setShowCreateFunctionDialog(false);
+      setNewFunctionDefinition('CREATE PROCEDURE dbo.MyProcedure\nAS\nBEGIN\n  -- Your code here\nEND');
+      loadTables(selectedDatabase);
+    } else {
+      alert('Create function failed: ' + result.error);
+    }
+  };
+
+  // Context menu handlers
+  const handleContextMenu = (e, item, type) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setContextMenuTarget({ item, type });
+    setContextMenuPosition({ x: e.clientX, y: e.clientY });
+    setShowContextMenu(true);
+  };
+
+  const handleContextMenuAction = (action) => {
+    setShowContextMenu(false);
+
+    if (!contextMenuTarget) return;
+
+    const { item, type } = contextMenuTarget;
+
+    switch (action) {
+      case 'copy-table':
+        setCopiedTable({
+          ...item,
+          sourceDatabase: selectedDatabase,
+          connectionId: selectedConnection.id
+        });
+        setSelectedTable(item);
+        alert(`Table ${item.TABLE_NAME} copied! Right-click and paste in any database.`);
+        break;
+      case 'paste-table':
+        if (copiedTable) {
+          // If pasted on a database, use that database
+          if (type === 'database') {
+            setTargetDatabase(item);
+          } else {
+            setTargetDatabase(selectedDatabase);
+          }
+          setShowCopyDialog(true);
+        }
+        break;
+      case 'delete-table':
+        handleDeleteTable(item);
+        break;
+      case 'rename-table':
+        handleRenameTable(item);
+        break;
+      case 'open-table':
+        loadTableData(item);
+        break;
+      case 'delete-function':
+        handleDeleteFunction(item);
+        break;
+      case 'rename-function':
+        handleRenameFunction(item);
+        break;
+      case 'open-function':
+        loadFunctionDefinition(item);
+        break;
+      case 'backup-database':
+        setBackupPath('');
+        setShowBackupDialog(true);
+        break;
+      default:
+        break;
+    }
+  };
+
   const executeRename = async () => {
     if (!newName || newName.trim() === '') {
       alert('Please enter a valid name');
@@ -803,6 +1054,37 @@ function App() {
     }
   };
 
+  const handleBrowseBackupPath = async () => {
+    const defaultFileName = `${selectedDatabase}_${new Date().toISOString().split('T')[0]}.bak`;
+    const result = await ipcRenderer.invoke('select-backup-path', { defaultFileName });
+
+    if (result.success && result.filePath) {
+      setBackupPath(result.filePath);
+    }
+  };
+
+  const handleBackupDatabase = async () => {
+    setBackupInProgress(true);
+    const result = await ipcRenderer.invoke('backup-database', {
+      connectionId: selectedConnection.id,
+      database: selectedDatabase,
+      backupPath: backupPath ? backupPath.trim() : ''
+    });
+
+    setBackupInProgress(false);
+
+    if (result.success) {
+      const message = result.path
+        ? `Database backup completed successfully!\n\nSaved to:\n${result.path}`
+        : 'Database backup completed successfully!';
+      alert(message);
+      setShowBackupDialog(false);
+      setBackupPath('');
+    } else {
+      alert('Backup failed: ' + result.error);
+    }
+  };
+
   const performSmartSearch = async () => {
     if (!smartSearchTerm || !selectedDatabase) return;
 
@@ -901,13 +1183,28 @@ function App() {
               size="small"
               style={{ width: '80px' }}
             />
-            <Input
-              placeholder="Password"
+            <input
+              ref={passwordInputRef}
               type="password"
-              value={connectionForm.password}
-              onChange={(e) => setConnectionForm({ ...connectionForm, password: e.target.value })}
-              size="small"
-              style={{ width: '100px' }}
+              placeholder="Password"
+              defaultValue={connectionForm.password}
+              onChange={(e) => {
+                connectionForm.password = e.target.value;
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  handleConnect();
+                }
+              }}
+              style={{
+                width: '100px',
+                height: '32px',
+                padding: '0 8px',
+                border: '1px solid #d1d1d1',
+                borderRadius: '4px',
+                fontSize: '14px',
+                fontFamily: 'inherit'
+              }}
             />
             <Input
               placeholder="Database"
@@ -926,14 +1223,9 @@ function App() {
               disabled={!selectedDatabase}
               icon={<Search20Regular />}
               appearance="primary"
+              title="Smart Search (Ctrl+F)"
             >
-              Smart Search
-            </Button>
-            <Button onClick={handleCopyTable} disabled={!selectedTable} icon={<Copy20Regular />}>
-              Copy Table
-            </Button>
-            <Button onClick={handlePasteTable} disabled={!copiedTable}>
-              Paste to {selectedDatabase}
+              Search (Ctrl+F)
             </Button>
           </div>
         </div>
@@ -959,6 +1251,7 @@ function App() {
                           <TreeItemLayout
                             iconBefore={<Database20Regular />}
                             onClick={() => loadTables(db)}
+                            onContextMenu={(e) => handleContextMenu(e, db, 'database')}
                           >
                             {db}
                           </TreeItemLayout>
@@ -973,6 +1266,7 @@ function App() {
                                       <TreeItemLayout
                                         iconBefore={<Table20Regular />}
                                         onClick={() => loadTableData(table)}
+                                        onContextMenu={(e) => handleContextMenu(e, table, 'table')}
                                       >
                                         {table.TABLE_NAME}
                                       </TreeItemLayout>
@@ -988,6 +1282,7 @@ function App() {
                                       <TreeItemLayout
                                         iconBefore={<Code20Regular />}
                                         onClick={() => loadFunctionDefinition(func)}
+                                        onContextMenu={(e) => handleContextMenu(e, func, 'function')}
                                       >
                                         {func.ROUTINE_NAME}
                                       </TreeItemLayout>
@@ -1081,6 +1376,14 @@ function App() {
                 <div className="card-header">
                   <h3>All Tables in {selectedDatabase}</h3>
                   <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                    <Button
+                      appearance="primary"
+                      size="small"
+                      icon={<Add20Regular />}
+                      onClick={() => setShowCreateTableDialog(true)}
+                    >
+                      Create New Table
+                    </Button>
                     <div style={{ display: 'flex', gap: '4px' }}>
                       <Button
                         size="small"
@@ -1121,7 +1424,7 @@ function App() {
                       table.TABLE_SCHEMA.toLowerCase().includes(searchTerm.toLowerCase())
                     )
                     .map((table, idx) => (
-                      <Card key={idx} className="grid-item">
+                      <Card key={idx} className="grid-item" onContextMenu={(e) => handleContextMenu(e, table, 'table')}>
                         <div className="grid-item-main" onClick={() => loadTableData(table)}>
                           <div className="grid-item-icon">
                             <Table20Regular />
@@ -1159,7 +1462,7 @@ function App() {
                         table.TABLE_SCHEMA.toLowerCase().includes(searchTerm.toLowerCase())
                       )
                       .map((table, idx) => (
-                        <div key={idx} className="list-item" onClick={() => loadTableData(table)}>
+                        <div key={idx} className="list-item" onClick={() => loadTableData(table)} onContextMenu={(e) => handleContextMenu(e, table, 'table')}>
                           <Table20Regular />
                           <span className="list-item-name">{table.TABLE_SCHEMA}.{table.TABLE_NAME}</span>
                           <div className="list-item-actions">
@@ -1200,7 +1503,7 @@ function App() {
                             table.TABLE_SCHEMA.toLowerCase().includes(searchTerm.toLowerCase())
                           )
                           .map((table, idx) => (
-                            <tr key={idx} onClick={() => loadTableData(table)} style={{ cursor: 'pointer' }}>
+                            <tr key={idx} onClick={() => loadTableData(table)} onContextMenu={(e) => handleContextMenu(e, table, 'table')} style={{ cursor: 'pointer' }}>
                               <td>{table.TABLE_NAME}</td>
                               <td>{table.TABLE_SCHEMA}</td>
                               <td>
@@ -1234,6 +1537,14 @@ function App() {
                 <div className="card-header">
                   <h3>All Functions in {selectedDatabase}</h3>
                   <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                    <Button
+                      appearance="primary"
+                      size="small"
+                      icon={<Add20Regular />}
+                      onClick={() => setShowCreateFunctionDialog(true)}
+                    >
+                      Create New Function
+                    </Button>
                     <div className="view-switcher">
                       <Button
                         appearance={viewType === 'grid' ? 'primary' : 'subtle'}
@@ -1278,7 +1589,7 @@ function App() {
                         func.ROUTINE_SCHEMA.toLowerCase().includes(searchTerm.toLowerCase())
                       )
                       .map((func, idx) => (
-                        <Card key={idx} className="grid-item">
+                        <Card key={idx} className="grid-item" onContextMenu={(e) => handleContextMenu(e, func, 'function')}>
                           <div className="grid-item-main" onClick={() => loadFunctionDefinition(func)}>
                             <div className="grid-item-icon">
                               <Code20Regular />
@@ -1295,6 +1606,14 @@ function App() {
                             >
                               Rename
                             </Button>
+                            <Button
+                              size="small"
+                              appearance="primary"
+                              onClick={(e) => { e.stopPropagation(); handleDeleteFunction(func); }}
+                              style={{ backgroundColor: '#d13438', borderColor: '#d13438' }}
+                            >
+                              Delete
+                            </Button>
                           </div>
                         </Card>
                       ))}
@@ -1309,7 +1628,7 @@ function App() {
                         func.ROUTINE_SCHEMA.toLowerCase().includes(searchTerm.toLowerCase())
                       )
                       .map((func, idx) => (
-                        <div key={idx} className="list-item">
+                        <div key={idx} className="list-item" onContextMenu={(e) => handleContextMenu(e, func, 'function')}>
                           <Code20Regular style={{ color: '#0078d4' }} />
                           <div className="list-item-name" onClick={() => loadFunctionDefinition(func)}>
                             {func.ROUTINE_SCHEMA}.{func.ROUTINE_NAME} ({func.ROUTINE_TYPE})
@@ -1321,6 +1640,14 @@ function App() {
                               onClick={(e) => { e.stopPropagation(); handleRenameFunction(func); }}
                             >
                               Rename
+                            </Button>
+                            <Button
+                              size="small"
+                              appearance="subtle"
+                              onClick={(e) => { e.stopPropagation(); handleDeleteFunction(func); }}
+                              style={{ color: 'red' }}
+                            >
+                              Delete
                             </Button>
                           </div>
                         </div>
@@ -1346,7 +1673,7 @@ function App() {
                             func.ROUTINE_SCHEMA.toLowerCase().includes(searchTerm.toLowerCase())
                           )
                           .map((func, idx) => (
-                            <tr key={idx} style={{ cursor: 'pointer' }}>
+                            <tr key={idx} onContextMenu={(e) => handleContextMenu(e, func, 'function')} style={{ cursor: 'pointer' }}>
                               <td onClick={() => loadFunctionDefinition(func)}>{func.ROUTINE_NAME}</td>
                               <td onClick={() => loadFunctionDefinition(func)}>{func.ROUTINE_SCHEMA}</td>
                               <td onClick={() => loadFunctionDefinition(func)}>{func.ROUTINE_TYPE}</td>
@@ -1357,6 +1684,14 @@ function App() {
                                   onClick={(e) => { e.stopPropagation(); handleRenameFunction(func); }}
                                 >
                                   Rename
+                                </Button>
+                                <Button
+                                  size="small"
+                                  appearance="subtle"
+                                  onClick={(e) => { e.stopPropagation(); handleDeleteFunction(func); }}
+                                  style={{ color: 'red' }}
+                                >
+                                  Delete
                                 </Button>
                               </td>
                             </tr>
@@ -1371,9 +1706,206 @@ function App() {
           </div>
         </div>
 
+        {/* Context Menu */}
+        {showContextMenu && (
+          <>
+            <div
+              style={{
+                position: 'fixed',
+                top: 0,
+                left: 0,
+                right: 0,
+                bottom: 0,
+                zIndex: 999
+              }}
+              onClick={() => setShowContextMenu(false)}
+            />
+            <div
+              style={{
+                position: 'fixed',
+                top: contextMenuPosition.y,
+                left: contextMenuPosition.x,
+                background: '#fff',
+                border: '1px solid #e0e0e0',
+                borderRadius: '4px',
+                boxShadow: '0 4px 16px rgba(0,0,0,0.15)',
+                zIndex: 1000,
+                minWidth: '180px',
+                padding: '4px 0',
+                fontSize: '12px'
+              }}
+            >
+              {contextMenuTarget?.type === 'table' && (
+                <>
+                  <div
+                    style={{
+                      padding: '6px 12px',
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '8px'
+                    }}
+                    onMouseEnter={(e) => e.currentTarget.style.background = '#f5f5f5'}
+                    onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
+                    onClick={() => handleContextMenuAction('open-table')}
+                  >
+                    <Table20Regular /> Open Table
+                  </div>
+                  <div style={{ height: '1px', background: '#e0e0e0', margin: '4px 0' }} />
+                  <div
+                    style={{
+                      padding: '6px 12px',
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '8px'
+                    }}
+                    onMouseEnter={(e) => e.currentTarget.style.background = '#f5f5f5'}
+                    onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
+                    onClick={() => handleContextMenuAction('copy-table')}
+                  >
+                    <Copy20Regular /> Copy Table
+                  </div>
+                  {copiedTable && (
+                    <div
+                      style={{
+                        padding: '6px 12px',
+                        cursor: 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '8px'
+                      }}
+                      onMouseEnter={(e) => e.currentTarget.style.background = '#f5f5f5'}
+                      onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
+                      onClick={() => handleContextMenuAction('paste-table')}
+                    >
+                      Paste to {selectedDatabase}
+                    </div>
+                  )}
+                  <div style={{ height: '1px', background: '#e0e0e0', margin: '4px 0' }} />
+                  <div
+                    style={{
+                      padding: '6px 12px',
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '8px'
+                    }}
+                    onMouseEnter={(e) => e.currentTarget.style.background = '#f5f5f5'}
+                    onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
+                    onClick={() => handleContextMenuAction('rename-table')}
+                  >
+                    Rename
+                  </div>
+                  <div
+                    style={{
+                      padding: '6px 12px',
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '8px',
+                      color: '#d13438'
+                    }}
+                    onMouseEnter={(e) => e.currentTarget.style.background = '#f5f5f5'}
+                    onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
+                    onClick={() => handleContextMenuAction('delete-table')}
+                  >
+                    Delete Table
+                  </div>
+                </>
+              )}
+              {contextMenuTarget?.type === 'function' && (
+                <>
+                  <div
+                    style={{
+                      padding: '6px 12px',
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '8px'
+                    }}
+                    onMouseEnter={(e) => e.currentTarget.style.background = '#f5f5f5'}
+                    onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
+                    onClick={() => handleContextMenuAction('open-function')}
+                  >
+                    <Code20Regular /> Open Function
+                  </div>
+                  <div style={{ height: '1px', background: '#e0e0e0', margin: '4px 0' }} />
+                  <div
+                    style={{
+                      padding: '6px 12px',
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '8px'
+                    }}
+                    onMouseEnter={(e) => e.currentTarget.style.background = '#f5f5f5'}
+                    onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
+                    onClick={() => handleContextMenuAction('rename-function')}
+                  >
+                    Rename
+                  </div>
+                  <div
+                    style={{
+                      padding: '6px 12px',
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '8px',
+                      color: '#d13438'
+                    }}
+                    onMouseEnter={(e) => e.currentTarget.style.background = '#f5f5f5'}
+                    onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
+                    onClick={() => handleContextMenuAction('delete-function')}
+                  >
+                    Delete Function
+                  </div>
+                </>
+              )}
+              {contextMenuTarget?.type === 'database' && (
+                <>
+                  {copiedTable && (
+                    <>
+                      <div
+                        style={{
+                          padding: '6px 12px',
+                          cursor: 'pointer',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '8px'
+                        }}
+                        onMouseEnter={(e) => e.currentTarget.style.background = '#f5f5f5'}
+                        onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
+                        onClick={() => handleContextMenuAction('paste-table')}
+                      >
+                        Paste Table "{copiedTable.TABLE_NAME}"
+                      </div>
+                      <div style={{ height: '1px', background: '#e0e0e0', margin: '4px 0' }} />
+                    </>
+                  )}
+                  <div
+                    style={{
+                      padding: '6px 12px',
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '8px'
+                    }}
+                    onMouseEnter={(e) => e.currentTarget.style.background = '#f5f5f5'}
+                    onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
+                    onClick={() => handleContextMenuAction('backup-database')}
+                  >
+                    <DatabaseArrowDown20Regular /> Backup Database
+                  </div>
+                </>
+              )}
+            </div>
+          </>
+        )}
+
         {/* Run Function Dialog */}
         <Dialog open={showRunDialog} onOpenChange={(e, data) => setShowRunDialog(data.open)}>
-          <DialogSurface style={{ maxWidth: '600px' }}>
+          <DialogSurface style={{ minWidth: '500px', maxWidth: '800px', maxHeight: '90vh' }}>
             <DialogBody>
               <DialogTitle>Run {selectedFunction?.ROUTINE_TYPE}: {selectedFunction?.ROUTINE_NAME}</DialogTitle>
               <DialogContent>
@@ -1434,7 +1966,7 @@ function App() {
 
         {/* Rename Dialog */}
         <Dialog open={showRenameDialog} onOpenChange={(e, data) => setShowRenameDialog(data.open)}>
-          <DialogSurface>
+          <DialogSurface style={{ minWidth: '400px', maxWidth: '500px' }}>
             <DialogBody>
               <DialogTitle>Rename {renameType === 'table' ? 'Table' : 'Function/Procedure'}</DialogTitle>
               <DialogContent>
@@ -1464,7 +1996,7 @@ function App() {
 
         {/* Copy Dialog */}
         <Dialog open={showCopyDialog} onOpenChange={(e, data) => setShowCopyDialog(data.open)}>
-          <DialogSurface>
+          <DialogSurface style={{ minWidth: '450px', maxWidth: '550px' }}>
             <DialogBody>
               <DialogTitle>Copy Table</DialogTitle>
               <DialogContent>
@@ -1493,6 +2025,228 @@ function App() {
           </DialogSurface>
         </Dialog>
 
+        {/* Backup Database Dialog */}
+        <Dialog open={showBackupDialog} onOpenChange={(e, data) => setShowBackupDialog(data.open)}>
+          <DialogSurface style={{ minWidth: '500px', maxWidth: '650px' }}>
+            <DialogBody>
+              <DialogTitle>Backup Database: {selectedDatabase}</DialogTitle>
+              <DialogContent>
+                <Field>
+                  <Checkbox
+                    checked={!backupPath}
+                    onChange={(e, data) => {
+                      if (data.checked) {
+                        setBackupPath('');
+                      } else {
+                        setBackupPath(`C:\\backup\\${selectedDatabase}_${new Date().toISOString().split('T')[0]}.bak`);
+                      }
+                    }}
+                    label="Use SQL Server default backup location (recommended)"
+                  />
+                </Field>
+                {backupPath && (
+                  <Field label="Custom backup file path (.bak)" style={{ marginTop: '12px' }}>
+                    <div style={{ display: 'flex', gap: '8px' }}>
+                      <Input
+                        value={backupPath}
+                        onChange={(e) => setBackupPath(e.target.value)}
+                        placeholder="C:\backup\database_2025-01-20.bak"
+                        style={{ flex: 1 }}
+                      />
+                      <Button onClick={handleBrowseBackupPath}>
+                        Browse...
+                      </Button>
+                    </div>
+                  </Field>
+                )}
+                <div style={{ marginTop: '12px', fontSize: '11px', color: '#605e5c' }}>
+                  <p style={{ margin: '4px 0' }}>💡 Tips:</p>
+                  <ul style={{ margin: '4px 0', paddingLeft: '20px' }}>
+                    {!backupPath ? (
+                      <>
+                        <li style={{ color: '#107c10', fontWeight: '500' }}>✓ Using SQL Server default location (recommended - always works!)</li>
+                        <li>SQL Server will save to its configured backup directory</li>
+                      </>
+                    ) : (
+                      <>
+                        <li style={{ color: '#d13438', fontWeight: '500' }}>⚠ Custom path - may fail if SQL Server doesn't have permissions!</li>
+                        <li>SQL Server service must have WRITE access to this folder</li>
+                        <li>Desktop/Documents usually DON'T work - use C:\backup or similar</li>
+                      </>
+                    )}
+                  </ul>
+                </div>
+              </DialogContent>
+              <DialogActions>
+                <Button appearance="secondary" onClick={() => setShowBackupDialog(false)} disabled={backupInProgress}>
+                  Cancel
+                </Button>
+                <Button appearance="primary" onClick={handleBackupDatabase} disabled={backupInProgress}>
+                  {backupInProgress ? 'Backing up...' : 'Start Backup'}
+                </Button>
+              </DialogActions>
+            </DialogBody>
+          </DialogSurface>
+        </Dialog>
+
+        {/* Create Table Dialog */}
+        <Dialog open={showCreateTableDialog} onOpenChange={(e, data) => setShowCreateTableDialog(data.open)}>
+          <DialogSurface style={{ minWidth: '700px', maxWidth: '900px', maxHeight: '90vh' }}>
+            <DialogBody>
+              <DialogTitle>Create New Table</DialogTitle>
+              <DialogContent style={{ maxHeight: '70vh', overflow: 'auto' }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                  <Field label="Schema">
+                    <Input
+                      value={newTableSchema}
+                      onChange={(e) => setNewTableSchema(e.target.value)}
+                      placeholder="dbo"
+                    />
+                  </Field>
+                  <Field label="Table Name">
+                    <Input
+                      value={newTableName}
+                      onChange={(e) => setNewTableName(e.target.value)}
+                      placeholder="MyTable"
+                    />
+                  </Field>
+                  <h4 style={{ margin: '8px 0' }}>Columns</h4>
+                  {newTableColumns.map((col, idx) => (
+                    <div key={idx} style={{ display: 'flex', gap: '8px', alignItems: 'flex-end', padding: '8px', background: '#f5f5f5', borderRadius: '4px' }}>
+                      <Field label="Name" style={{ flex: 1 }}>
+                        <Input
+                          value={col.name}
+                          onChange={(e) => {
+                            const newCols = [...newTableColumns];
+                            newCols[idx].name = e.target.value;
+                            setNewTableColumns(newCols);
+                          }}
+                          placeholder="ColumnName"
+                          size="small"
+                        />
+                      </Field>
+                      <Field label="Type" style={{ flex: 1 }}>
+                        <Input
+                          value={col.dataType}
+                          onChange={(e) => {
+                            const newCols = [...newTableColumns];
+                            newCols[idx].dataType = e.target.value;
+                            setNewTableColumns(newCols);
+                          }}
+                          placeholder="INT"
+                          size="small"
+                        />
+                      </Field>
+                      <Field label="Length" style={{ width: '80px' }}>
+                        <Input
+                          value={col.length}
+                          onChange={(e) => {
+                            const newCols = [...newTableColumns];
+                            newCols[idx].length = e.target.value;
+                            setNewTableColumns(newCols);
+                          }}
+                          placeholder="50"
+                          size="small"
+                        />
+                      </Field>
+                      <Checkbox
+                        checked={col.isPrimaryKey}
+                        onChange={(e, data) => {
+                          const newCols = [...newTableColumns];
+                          newCols[idx].isPrimaryKey = data.checked;
+                          setNewTableColumns(newCols);
+                        }}
+                        label="PK"
+                      />
+                      <Checkbox
+                        checked={col.isIdentity}
+                        onChange={(e, data) => {
+                          const newCols = [...newTableColumns];
+                          newCols[idx].isIdentity = data.checked;
+                          setNewTableColumns(newCols);
+                        }}
+                        label="Identity"
+                      />
+                      <Checkbox
+                        checked={!col.allowNull}
+                        onChange={(e, data) => {
+                          const newCols = [...newTableColumns];
+                          newCols[idx].allowNull = !data.checked;
+                          setNewTableColumns(newCols);
+                        }}
+                        label="NOT NULL"
+                      />
+                      <Button
+                        size="small"
+                        appearance="subtle"
+                        onClick={() => {
+                          const newCols = newTableColumns.filter((_, i) => i !== idx);
+                          setNewTableColumns(newCols);
+                        }}
+                        disabled={newTableColumns.length === 1}
+                      >
+                        Remove
+                      </Button>
+                    </div>
+                  ))}
+                  <Button
+                    size="small"
+                    icon={<Add20Regular />}
+                    onClick={() => {
+                      setNewTableColumns([...newTableColumns, { name: '', dataType: 'INT', length: '', isPrimaryKey: false, isIdentity: false, allowNull: true, defaultValue: '' }]);
+                    }}
+                  >
+                    Add Column
+                  </Button>
+                </div>
+              </DialogContent>
+              <DialogActions>
+                <Button appearance="secondary" onClick={() => setShowCreateTableDialog(false)}>
+                  Cancel
+                </Button>
+                <Button appearance="primary" onClick={handleCreateTable}>
+                  Create Table
+                </Button>
+              </DialogActions>
+            </DialogBody>
+          </DialogSurface>
+        </Dialog>
+
+        {/* Create Function Dialog */}
+        <Dialog open={showCreateFunctionDialog} onOpenChange={(e, data) => setShowCreateFunctionDialog(data.open)}>
+          <DialogSurface style={{ minWidth: '700px', maxWidth: '900px', maxHeight: '90vh' }}>
+            <DialogBody>
+              <DialogTitle>Create New Function/Procedure</DialogTitle>
+              <DialogContent style={{ maxHeight: '70vh', overflow: 'auto' }}>
+                <Field label="SQL Definition">
+                  <textarea
+                    value={newFunctionDefinition}
+                    onChange={(e) => setNewFunctionDefinition(e.target.value)}
+                    className="sql-editor"
+                    style={{ minHeight: '300px', width: '100%', fontFamily: 'monospace', fontSize: '12px' }}
+                    spellCheck={false}
+                  />
+                </Field>
+                <div style={{ marginTop: '12px', fontSize: '11px', color: '#605e5c' }}>
+                  <p>Examples:</p>
+                  <ul style={{ margin: '4px 0', paddingLeft: '20px' }}>
+                    <li>CREATE PROCEDURE dbo.MyProc AS BEGIN ... END</li>
+                    <li>CREATE FUNCTION dbo.MyFunc() RETURNS INT AS BEGIN ... RETURN ... END</li>
+                  </ul>
+                </div>
+              </DialogContent>
+              <DialogActions>
+                <Button appearance="secondary" onClick={() => setShowCreateFunctionDialog(false)}>
+                  Cancel
+                </Button>
+                <Button appearance="primary" onClick={handleCreateFunction}>
+                  Create
+                </Button>
+              </DialogActions>
+            </DialogBody>
+          </DialogSurface>
+        </Dialog>
+
         {/* Smart Search Dialog */}
         <Dialog
           open={showSmartSearchDialog}
@@ -1505,10 +2259,10 @@ function App() {
             }
           }}
         >
-          <DialogSurface style={{ maxWidth: '700px', maxHeight: '80vh' }}>
+          <DialogSurface style={{ minWidth: '650px', maxWidth: '850px', maxHeight: '90vh' }}>
             <DialogBody>
               <DialogTitle>Smart Search in {selectedDatabase}</DialogTitle>
-              <DialogContent style={{ maxHeight: '60vh', overflow: 'auto' }}>
+              <DialogContent style={{ maxHeight: '75vh', overflow: 'auto' }}>
                 <div style={{ display: 'flex', gap: '8px', marginBottom: '16px' }}>
                   <Input
                     placeholder="Search tables, functions, data..."
